@@ -1,0 +1,390 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+import { ethers, Log } from "ethers";
+
+// Ensure this runs in Node.js runtime for better compatibility with ethers.js
+export const runtime = 'nodejs';
+
+const FACTORY_ADDRESS = process.env.NEXT_PUBLIC_FACTORY_ADDRESS_NFT_ONLY!;
+const SUPABASE_URL    = process.env.SUPABASE_URL!;
+const SUPABASE_SVC    = process.env.SUPABASE_SERVICE_KEY!;
+
+// OpenZeppelin Relayer Configuration (running in single-relayer mode)
+const RELAYER_RPC_URL = process.env.RELAYER_RPC_URL || 'https://sepolia.base.org';
+const RELAYER_PORT = process.env.RELAYER_PORT || '8080';
+const API_KEY = process.env.API_KEY || 'cardify-relayer-1234567890abcdefghijklmnopqrstuvwxyz';
+
+const FACTORY_ABI = [
+  {
+    name: "createCollection",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "p",
+        type: "tuple",
+        components: [
+          { name: "name",            type: "string"  },
+          { name: "symbol",          type: "string"  },
+          { name: "baseURI",         type: "string"  },
+          { name: "maxSupply",       type: "uint256" },
+          { name: "mintPrice",       type: "uint256" },
+          { name: "royaltyBps",      type: "uint96"  },
+          { name: "royaltyReceiver", type: "address" }
+        ]
+      }
+    ],
+    outputs: [{ name: "clone", type: "address" }]
+  },
+  {
+    name: "CollectionDeployed",
+    type: "event",
+    anonymous: false,
+    inputs: [
+      { indexed: true,  name: "creator",    type: "address" },
+      { indexed: false, name: "collection", type: "address" }
+    ]
+  }
+] as const;
+
+const safeParse = (iface: ethers.Interface, log: Log): ethers.LogDescription | undefined => {
+  try {
+    return iface.parseLog(log) || undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+// ---------- Single-relayer endpoints ----------
+const RELAYER_ID = 'base-sepolia-relayer';
+const RELAYER_BASE = `http://localhost:${RELAYER_PORT}/api/v1/relayers/${RELAYER_ID}/transactions`;
+const statusUrl = (id: string) => `http://localhost:${RELAYER_PORT}/api/v1/relayers/${RELAYER_ID}/transactions/${id}`;
+
+// Helper function to poll relayer transaction until we get the on-chain hash
+async function waitForRelayerHash(transactionId: string, timeoutMs: number = 300000): Promise<string> {
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeoutMs) {
+    try {
+      const response = await fetch(statusUrl(transactionId), {
+        headers: { 'Authorization': `Bearer ${API_KEY}` }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch transaction status: ${response.status}`);
+      }
+
+      const raw = await response.json();
+      const data = raw?.data ?? raw; // unwrap standard relayer shape { success, data, error }
+
+      const status = data?.status as string | undefined;
+      const hash =
+        data?.hash ??
+        data?.latest_tx_hash ??
+        data?.tx_hash ??
+        data?.transaction_hash ??
+        null;
+
+      if (hash) return hash;
+      if (status === 'failed') {
+        const reason = data?.error || data?.status_reason || 'Relayer marked failed';
+        throw new Error(reason);
+      }
+
+      await new Promise(res => setTimeout(res, 1500));
+    } catch (error) {
+      // Keep polling; log for diagnostics
+      // eslint-disable-next-line no-console
+      console.error('Error polling relayer transaction:', error);
+      await new Promise(res => setTimeout(res, 1500));
+    }
+  }
+  throw new Error(`Transaction polling timed out after ${timeoutMs}ms`);
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    console.log("🚀 Starting NFT collection deployment...");
+    console.log("📦 Ethers version:", ethers.version);
+    
+    // Validate required environment variables (remove RELAYER_ID since single-relayer mode)
+    const requiredEnvVars = {
+      NEXT_PUBLIC_FACTORY_ADDRESS_NFT_ONLY: process.env.NEXT_PUBLIC_FACTORY_ADDRESS_NFT_ONLY,
+      SUPABASE_URL: process.env.SUPABASE_URL,
+      SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY,
+      API_KEY: process.env.API_KEY,
+      RELAYER_RPC_URL: process.env.RELAYER_RPC_URL
+    };
+
+    console.log("📋 Environment variables check:", Object.keys(requiredEnvVars).map(key => `${key}: ${requiredEnvVars[key as keyof typeof requiredEnvVars] ? 'SET' : 'NOT_SET'}`));
+
+    const missingEnvVars = Object.entries(requiredEnvVars)
+      .filter(([_, value]) => !value)
+      .map(([key]) => key);
+
+    if (missingEnvVars.length > 0) {
+      console.error("❌ Missing environment variables:", missingEnvVars);
+      return NextResponse.json({
+        success: false,
+        error: `Missing required environment variables: ${missingEnvVars.join(', ')}`
+      }, { status: 500 });
+    }
+
+    console.log("📥 Parsing request body...");
+    const {
+      name, symbol, description, baseUri,
+      maxSupply, mintPrice, royaltyBps,
+      royaltyRecipient, ownerAddress
+    } = await req.json();
+
+    console.log("📋 Request data:", { name, symbol, description, baseUri, maxSupply, mintPrice, royaltyBps, royaltyRecipient, ownerAddress });
+
+    if (!name || !symbol || !baseUri || !maxSupply || !ownerAddress) {
+      console.error("❌ Missing required fields");
+      return NextResponse.json({ success: false, error: "Missing required fields" }, { status: 400 });
+    }
+    if (maxSupply < 5 || maxSupply > 1000) {
+      console.error("❌ Invalid max supply:", maxSupply);
+      return NextResponse.json({ success: false, error: "Max supply must be between 5 and 1000" }, { status: 400 });
+    }
+
+    console.log("🔐 Setting up Supabase client...");
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SVC);
+    const token = req.headers.get("authorization")?.replace("Bearer ", "");
+    if (!token) {
+      console.error("❌ No authorization token provided");
+      return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 });
+    }
+
+    console.log("👤 Authenticating user...");
+    const { data: { user } } = await supabase.auth.getUser(token);
+    if (!user) {
+      console.error("❌ Invalid authentication token");
+      return NextResponse.json({ success: false, error: "Invalid authentication" }, { status: 401 });
+    }
+
+    console.log("💰 Checking user credits...");
+    const { data: profile } = await supabase
+      .from("profiles").select("credits").eq("id", user.id).single();
+
+    if (!profile || profile.credits < 20) {
+      console.error("❌ Insufficient credits:", profile?.credits);
+      return NextResponse.json({ success: false, error: "Insufficient credits (need 20)" }, { status: 400 });
+    }
+
+    console.log("🔧 Processing ethers operations...");
+    let mintWei, ipfsURL, createCollectionData;
+    try {
+      mintWei = ethers.parseEther(mintPrice.toString());
+      ipfsURL = baseUri.replace("https://gateway.pinata.cloud/ipfs/", "ipfs://");
+
+      console.log("📝 Creating factory interface...");
+      // Prepare the transaction data for the relayer
+      const factoryInterface = new ethers.Interface(FACTORY_ABI);
+      createCollectionData = factoryInterface.encodeFunctionData("createCollection", [{
+        name, symbol, baseURI: ipfsURL,
+        maxSupply, mintPrice: mintWei,
+        royaltyBps, royaltyReceiver: royaltyRecipient
+      }]);
+      console.log("✅ Ethers operations completed");
+    } catch (ethersError) {
+      console.error("❌ Ethers operation failed:", ethersError);
+      throw ethersError;
+    }
+
+    // Health check (authorized)
+    console.log("🏥 Checking relayer health...");
+    {
+      const healthCheck = await fetch(`http://localhost:${RELAYER_PORT}/api/v1/health`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${API_KEY}` },
+      });
+      if (!healthCheck.ok) {
+        console.error("❌ Relayer health check failed:", healthCheck.status);
+        return NextResponse.json({
+          success: false,
+          error: `Relayer health check failed: ${healthCheck.status}. Please ensure the OpenZeppelin relayer is properly configured and running.`
+        }, { status: 503 });
+      }
+      console.log("✅ Relayer health check passed");
+    }
+
+    // Check if transactions endpoint is available
+    console.log("🔍 Checking relayer transactions endpoint...");
+    const testTxEndpoint = await fetch(RELAYER_BASE, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        to: "0x0000000000000000000000000000000000000000",
+        data: "0x",
+        value: "0",
+        speed: "average",
+        gas_limit: 100000
+      })
+    });
+
+    if (!testTxEndpoint.ok) {
+      console.error("❌ Relayer transactions endpoint not available:", testTxEndpoint.status);
+      return NextResponse.json({
+        success: false,
+        error: `Relayer transactions endpoint not available (${testTxEndpoint.status}). Please ensure the relayer is restarted with the updated configuration and the relayer ID '${RELAYER_ID}' is properly configured.`
+      }, { status: 503 });
+    }
+    console.log("✅ Relayer transactions endpoint available");
+
+    // ---- Submit create tx via relayer (single-relayer path) ----
+    console.log("📤 Submitting transaction to relayer...");
+    const createResp = await fetch(RELAYER_BASE, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        to: FACTORY_ADDRESS,
+        data: createCollectionData,
+        value: "0",
+        speed: "average",
+        gas_limit: 5000000
+      })
+    });
+
+    if (!createResp.ok) {
+      const errorText = await createResp.text();
+      console.error("❌ Relayer request failed:", createResp.status, errorText);
+      return NextResponse.json({
+        success: false,
+        error: `Relayer request failed: ${createResp.status} - ${errorText}`
+      }, { status: 502 });
+    }
+    console.log("✅ Transaction submitted to relayer");
+
+    const createJson = await createResp.json();
+    const createTxRecord = createJson?.data ?? createJson;
+    const createId: string | undefined = createTxRecord?.id;
+    if (!createId) {
+      return NextResponse.json({
+        success: false,
+        error: 'No transaction ID returned from relayer (create)'
+      }, { status: 502 });
+    }
+
+    // Wait for the transaction hash
+    const txHash = await waitForRelayerHash(createId);
+
+    // Wait for transaction confirmation
+    const provider = new ethers.JsonRpcProvider(RELAYER_RPC_URL);
+    const receipt = await provider.waitForTransaction(txHash);
+    if (!receipt) {
+      return NextResponse.json({
+        success: false,
+        error: 'Transaction receipt not found'
+      }, { status: 502 });
+    }
+
+    // Parse event (creator, collection)
+    const factory = new ethers.Contract(FACTORY_ADDRESS, FACTORY_ABI, provider);
+    const iface = factory.interface;
+    const parsedLog = receipt.logs.map(l => safeParse(iface, l))
+                                  .find(l => l?.name === "CollectionDeployed");
+    if (!parsedLog) {
+      return NextResponse.json({
+        success: false,
+        error: "CollectionDeployed event not found"
+      }, { status: 502 });
+    }
+    const collectionAddress: string = (parsedLog!.args as any).collection;
+
+    // Transfer ownership to user using relayer
+    const colAbi = [
+      "function owner() view returns (address)",
+      "function transferOwnership(address)"
+    ];
+    const collection = new ethers.Contract(collectionAddress, colAbi, provider);
+    // const ownerNow = await collection.owner(); // optional check
+
+    const transferOwnershipData = collection.interface.encodeFunctionData("transferOwnership", [ownerAddress]);
+
+    const transferResp = await fetch(RELAYER_BASE, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        to: collectionAddress,
+        data: transferOwnershipData,
+        value: "0",
+        speed: "average",
+        gas_limit: 100000
+      })
+    });
+
+    if (!transferResp.ok) {
+      const errorText = await transferResp.text();
+      return NextResponse.json({
+        success: false,
+        error: `Transfer ownership relayer request failed: ${transferResp.status} - ${errorText}`
+      }, { status: 502 });
+    }
+
+    const transferJson = await transferResp.json();
+    const transferTxRecord = transferJson?.data ?? transferJson;
+    let transferTxHash: string | null = null;
+
+    if (transferTxRecord?.id) {
+      try {
+        transferTxHash = await waitForRelayerHash(transferTxRecord.id);
+        await provider.waitForTransaction(transferTxHash);
+      } catch (e) {
+        // Non-fatal: deployment succeeded; transfer can be retried via admin later
+        // eslint-disable-next-line no-console
+        console.error('Ownership transfer polling failed:', e);
+      }
+    }
+
+    // Persist to DB
+    const cid = (() => {
+      try {
+        const [, id] = new URL(baseUri).pathname.split("/ipfs/");
+        return id ?? null;
+      } catch { return null; }
+    })();
+
+    await supabase.from("nft_collections").insert({
+      collection_address: collectionAddress.toLowerCase(),
+      owner_address:      ownerAddress.toLowerCase(),
+      user_id:            user.id,
+      name, symbol, description,
+      base_uri:   ipfsURL,
+      image_uri:  baseUri,
+      max_supply: maxSupply,
+      mint_price: mintWei.toString(),
+      royalty_bps: royaltyBps,
+      royalty_recipient: royaltyRecipient.toLowerCase(),
+      cid,
+      active: true
+    });
+
+    await supabase.from("profiles")
+      .update({ credits: profile.credits - 20 })
+      .eq("id", user.id);
+
+    return NextResponse.json({
+      success: true,
+      collectionAddress,
+      transactionHash: txHash,
+      transferTransactionHash: transferTxHash,
+      creditsDeducted: 20,
+      message: "NFT collection deployed successfully using relayer!"
+    });
+
+  } catch (err: any) {
+    // eslint-disable-next-line no-console
+    console.error("❌ deploy-nft-collection:", err);
+    return NextResponse.json({ success: false, error: err?.message ?? "Unknown error" }, { status: 500 });
+  }
+}
