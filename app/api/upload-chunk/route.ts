@@ -1,20 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFile, readFile, unlink, mkdir } from 'fs/promises'
-import { join } from 'path'
 import { v4 as uuidv4 } from 'uuid'
-import { existsSync } from 'fs'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-// Configure route to handle larger payloads
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '2mb' // Limit each chunk to 2MB
-    }
-  }
-}
+// Store chunks in memory (for serverless environments)
+const chunkStorage = new Map<string, Map<number, Buffer>>()
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,39 +19,36 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Create temp directory if it doesn't exist
-    const tempDir = join(process.cwd(), 'temp')
-    if (!existsSync(tempDir)) {
-      await mkdir(tempDir, { recursive: true })
-    }
-
-    // Create unique filename for this chunk
-    const chunkFileName = `${fileId}_${chunkIndex}.chunk`
-    const chunkPath = join(tempDir, chunkFileName)
-
-    // Convert base64 chunk to buffer and save
+    // Convert base64 chunk to buffer
     const buffer = Buffer.from(chunk, 'base64')
-    await writeFile(chunkPath, buffer)
+    
+    // Store chunk in memory
+    if (!chunkStorage.has(fileId)) {
+      chunkStorage.set(fileId, new Map())
+    }
+    chunkStorage.get(fileId)!.set(chunkIndex, buffer)
 
     // Check if we have all chunks
     const isLastChunk = chunkIndex === totalChunks - 1
 
     if (isLastChunk) {
-      // Combine all chunks
+      // Combine all chunks from memory
       const chunks = []
+      const fileChunks = chunkStorage.get(fileId)!
+      
       for (let i = 0; i < totalChunks; i++) {
-        const tempChunkPath = join(tempDir, `${fileId}_${i}.chunk`)
-        const chunkData = await readFile(tempChunkPath)
+        const chunkData = fileChunks.get(i)
+        if (!chunkData) {
+          throw new Error(`Missing chunk ${i}`)
+        }
         chunks.push(chunkData)
-        
-        // Clean up chunk file
-        await unlink(tempChunkPath)
       }
 
       // Combine chunks into final file
       const finalBuffer = Buffer.concat(chunks)
-      const finalPath = join(tempDir, `${fileId}_final.jpg`)
-      await writeFile(finalPath, finalBuffer)
+      
+      // Clean up memory
+      chunkStorage.delete(fileId)
 
       // Create form data for Pinata
       const formData = new FormData()
@@ -106,9 +94,6 @@ export async function POST(req: NextRequest) {
 
       const result = await pinataResponse.json()
       const pinataUrl = `https://gateway.pinata.cloud/ipfs/${result.IpfsHash}`
-
-      // Clean up final file
-      await unlink(finalPath)
 
       return NextResponse.json({
         success: true,
