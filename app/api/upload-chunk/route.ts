@@ -28,6 +28,9 @@ async function fileExists(filePath: string): Promise<boolean> {
 // Track processing files to prevent race conditions
 const processingFiles = new Set<string>()
 
+// Track successfully written chunks for debugging
+const writtenChunks = new Map<string, Set<number>>()
+
 export async function POST(req: NextRequest) {
   const startTime = Date.now()
   
@@ -52,9 +55,42 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Check if this chunk was already processed
+    const alreadyWritten = writtenChunks.get(fileId)?.has(chunkIndex)
+    if (alreadyWritten) {
+      console.log(`Chunk ${chunkIndex} for file ${fileId} was already written, skipping`)
+      return NextResponse.json({
+        success: true,
+        chunkIndex,
+        message: 'Chunk already processed',
+        processingTime: '0ms'
+      })
+    }
+
     // Create unique filename for this chunk
     const chunkFileName = `${fileId}_${chunkIndex}.chunk`
-    const chunkPath = join('/tmp', chunkFileName)
+    
+    // Try multiple possible temp directories
+    const possibleTempDirs = ['/tmp', '/var/tmp', process.cwd() + '/tmp']
+    let chunkPath = ''
+    let tempDir = ''
+    
+    for (const dir of possibleTempDirs) {
+      try {
+        await access(dir)
+        tempDir = dir
+        chunkPath = join(dir, chunkFileName)
+        break
+      } catch {
+        continue
+      }
+    }
+    
+    if (!chunkPath) {
+      throw new Error('No accessible temporary directory found')
+    }
+    
+    console.log(`Using temp directory: ${tempDir} for chunk ${chunkIndex}`)
 
     // Convert base64 chunk to buffer and save with retry mechanism
     const buffer = Buffer.from(chunk, 'base64')
@@ -63,9 +99,25 @@ export async function POST(req: NextRequest) {
     let writeSuccess = false
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
+        console.log(`Writing chunk ${chunkIndex} (attempt ${attempt}) to ${chunkPath}, buffer size: ${buffer.length} bytes`)
         await writeFile(chunkPath, buffer)
-        writeSuccess = true
-        break
+        
+        // Verify the file was written successfully
+        if (await fileExists(chunkPath)) {
+          const stats = await import('fs/promises').then(fs => fs.stat(chunkPath))
+          console.log(`Chunk ${chunkIndex} written successfully, file size: ${stats.size} bytes`)
+          
+          // Track this chunk as successfully written
+          if (!writtenChunks.has(fileId)) {
+            writtenChunks.set(fileId, new Set())
+          }
+          writtenChunks.get(fileId)!.add(chunkIndex)
+          
+          writeSuccess = true
+          break
+        } else {
+          console.error(`Chunk ${chunkIndex} file not found after write attempt ${attempt}`)
+        }
       } catch (error) {
         console.warn(`Attempt ${attempt} to write chunk ${chunkIndex} failed:`, error)
         if (attempt === 3) {
@@ -113,21 +165,45 @@ export async function POST(req: NextRequest) {
       try {
         // Wait a moment to ensure all chunks are written
         await new Promise(resolve => setTimeout(resolve, 100))
+        
+        // Debug: Show which chunks we expect to have written
+        const expectedChunks = writtenChunks.get(fileId) || new Set()
+        console.log(`Expected written chunks for ${fileId}:`, Array.from(expectedChunks).sort())
+        console.log(`Total chunks expected: ${totalChunks}`)
       
       // Combine all chunks
       const chunks = []
       const missingChunks = []
       const chunkPaths = []
       
+      // Determine which temp directory to use (same logic as chunk writing)
+      const possibleTempDirs = ['/tmp', '/var/tmp', process.cwd() + '/tmp']
+      let tempDir = '/tmp' // default fallback
+      
+      for (const dir of possibleTempDirs) {
+        try {
+          await access(dir)
+          tempDir = dir
+          break
+        } catch {
+          continue
+        }
+      }
+      
+      console.log(`Using temp directory for final processing: ${tempDir}`)
+      
       // First, verify all chunks exist
       for (let i = 0; i < totalChunks; i++) {
-        const tempChunkPath = join('/tmp', `${fileId}_${i}.chunk`)
+        const tempChunkPath = join(tempDir, `${fileId}_${i}.chunk`)
         chunkPaths.push(tempChunkPath)
         
         // Check if chunk file exists before reading
         if (!(await fileExists(tempChunkPath))) {
           missingChunks.push(i)
           console.warn(`Chunk ${i} for file ${fileId} not found at ${tempChunkPath}`)
+          console.warn(`Was chunk ${i} tracked as written? ${expectedChunks.has(i)}`)
+        } else {
+          console.log(`Chunk ${i} found at ${tempChunkPath}`)
         }
       }
       
@@ -139,7 +215,7 @@ export async function POST(req: NextRequest) {
         // Re-check missing chunks
         const stillMissing = []
         for (const chunkIndex of missingChunks) {
-          const tempChunkPath = join('/tmp', `${fileId}_${chunkIndex}.chunk`)
+          const tempChunkPath = join(tempDir, `${fileId}_${chunkIndex}.chunk`)
           if (!(await fileExists(tempChunkPath))) {
             stillMissing.push(chunkIndex)
           }
@@ -160,7 +236,7 @@ export async function POST(req: NextRequest) {
       
       // Now read all chunks
       for (let i = 0; i < totalChunks; i++) {
-        const tempChunkPath = join('/tmp', `${fileId}_${i}.chunk`)
+        const tempChunkPath = join(tempDir, `${fileId}_${i}.chunk`)
         
         try {
           const chunkData = await readFile(tempChunkPath)
@@ -190,7 +266,7 @@ export async function POST(req: NextRequest) {
 
       // Combine chunks into final file
       const finalBuffer = Buffer.concat(chunks)
-      const finalPath = join('/tmp', `${fileId}_final.jpg`)
+      const finalPath = join(tempDir, `${fileId}_final.jpg`)
       await writeFile(finalPath, finalBuffer)
 
       // Create form data for Pinata
@@ -233,7 +309,7 @@ export async function POST(req: NextRequest) {
 
       // Clean up all chunk files
       for (let i = 0; i < totalChunks; i++) {
-        const tempChunkPath = join('/tmp', `${fileId}_${i}.chunk`)
+        const tempChunkPath = join(tempDir, `${fileId}_${i}.chunk`)
         try {
           await unlink(tempChunkPath)
         } catch (error) {
@@ -260,8 +336,9 @@ export async function POST(req: NextRequest) {
           totalChunks: totalChunks
         })
       } finally {
-        // Always remove from processing set
+        // Always remove from processing set and cleanup tracking
         processingFiles.delete(fileId)
+        writtenChunks.delete(fileId)
       }
     }
 
