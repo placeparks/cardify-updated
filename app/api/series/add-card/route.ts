@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
 
       // Determine categories based on series type
       let categories: string[] = []
-      if (series.series_type === 'cards_with_nfts') {
+      if (series.series_type === 'cards_with_nfts' || series.series_type === 'nft_backed') {
         categories = ['limited_edition', 'nft_redeemable']
       } else if (series.series_type === 'physical_only') {
         categories = ['limited_edition']
