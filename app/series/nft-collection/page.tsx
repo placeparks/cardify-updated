@@ -366,8 +366,8 @@ export default function NFTCollectionPage() {
 
       <Navigation />
 
-      <div className="px-4 sm:px-6 py-6 sm:py-8 pt-20 sm:pt-24 pb-16 sm:pb-20">
-        <div className="max-w-4xl mx-auto">
+      <div className="px-4 sm:px-6 py-6 sm:py-8 pt-20 sm:pt-24 pb-16 sm:pb-20 min-w-0">
+        <div className="max-w-4xl mx-auto min-w-0">
           {/* Header */}
           <div className="mb-6 sm:mb-8 text-center">
             <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-white tracking-wider mb-3 sm:mb-4">
@@ -521,10 +521,9 @@ export default function NFTCollectionPage() {
               <CardContent>
                 <div className="p-4 bg-slate-800/50 border border-slate-700 rounded-lg">
                   <div className="space-y-4">
-                
                     <div className="p-3 bg-slate-800 rounded-lg border border-slate-600">
-                      <span className="text-gray-100 text-sm font-medium block mb-2">Wallet Address:</span>
-                      <div className="text-white font-mono text-xs break-all bg-slate-900 p-3 rounded border border-slate-700">
+                      <span className="text-gray-100 text-xs sm:text-sm font-medium block mb-2">Wallet Address:</span>
+                      <div className="text-white font-mono text-xs sm:text-sm break-all bg-slate-900 p-3 rounded border border-slate-700 overflow-x-auto">
                         {finalWalletAddress}
                       </div>
                     </div>
@@ -733,7 +732,7 @@ export default function NFTCollectionPage() {
               <CardContent>
                 <div className="space-y-8">
                   {/* Collection Preview */}
-                  <div className="space-y-8 sm:space-y-0 sm:grid sm:grid-cols-2 sm:gap-8">
+                  <div className="space-y-6 sm:space-y-0 sm:grid sm:grid-cols-2 sm:gap-6">
                     <div className="space-y-4">
                       <h4 className="text-cyan-400 font-bold text-lg flex items-center gap-2">
                         <ImageIcon className="w-5 h-5" />
@@ -756,29 +755,29 @@ export default function NFTCollectionPage() {
                         Collection Details
                       </h4>
                       <div className="space-y-3 p-4 bg-slate-800/50 rounded-xl border border-slate-700">
-                        <div className="flex justify-between items-center p-3 bg-slate-800 rounded-lg border border-purple-500/30">
+                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center p-3 bg-slate-800 rounded-lg border border-purple-500/30 gap-2">
                           <span className="text-gray-100 font-medium">Name:</span>
                           <span className="text-purple-400 font-bold">{formData.name}</span>
                         </div>
-                        <div className="flex justify-between items-center p-3 bg-slate-800 rounded-lg border border-cyan-500/30">
+                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center p-3 bg-slate-800 rounded-lg border border-cyan-500/30 gap-2">
                           <span className="text-gray-100 font-medium">Symbol:</span>
                           <span className="text-cyan-400 font-bold">{formData.symbol}</span>
                         </div>
-                        <div className="flex justify-between items-center p-3 bg-slate-800 rounded-lg border border-purple-500/30">
+                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center p-3 bg-slate-800 rounded-lg border border-purple-500/30 gap-2">
                           <span className="text-gray-100 font-medium">Max Supply:</span>
                           <span className="text-purple-400 font-bold">{formData.maxSupply}</span>
                         </div>
-                        <div className="flex justify-between items-center p-3 bg-slate-800 rounded-lg border border-emerald-500/30">
+                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center p-3 bg-slate-800 rounded-lg border border-emerald-500/30 gap-2">
                           <span className="text-gray-100 font-medium">Mint Price:</span>
                           <span className="text-emerald-400 font-bold">{formData.mintPrice} ETH</span>
                         </div>
-                        <div className="flex justify-between items-center p-3 bg-slate-800 rounded-lg border border-cyan-500/30">
+                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center p-3 bg-slate-800 rounded-lg border border-cyan-500/30 gap-2">
                           <span className="text-gray-100 font-medium">Royalty:</span>
                           <span className="text-cyan-400 font-bold">{formData.royaltyBps / 100}%</span>
                         </div>
                         <div className="p-3 bg-slate-800 rounded-lg border border-emerald-500/30">
                           <span className="text-gray-100 font-medium block mb-2">Owner:</span>
-                          <span className="text-white font-mono text-sm whitespace-nowrap overflow-x-auto bg-slate-900 p-3 rounded border border-slate-700">
+                          <span className="text-white font-mono text-xs sm:text-sm break-all block bg-slate-900 p-3 rounded border border-slate-700">
                             {finalWalletAddress}
                           </span>
                         </div>
@@ -901,44 +900,44 @@ export default function NFTCollectionPage() {
                       Your NFT Collection
                     </h4>
                     <div className="space-y-3">
-                      <div className="flex justify-between items-center p-3 bg-slate-800 rounded-lg border border-emerald-500/30">
-                        <span className="text-gray-100 font-medium">Address:</span>
-                        <span className="text-white font-mono text-sm">{collectionAddress}</span>
+                      <div className="p-3 bg-slate-800 rounded-lg border border-emerald-500/30">
+                        <span className="text-gray-100 font-medium block mb-2">Address:</span>
+                        <span className="text-white font-mono text-xs sm:text-sm break-all block bg-slate-900 p-2 rounded border border-slate-700">{collectionAddress}</span>
                       </div>
-                      <div className="flex justify-between items-center p-3 bg-slate-800 rounded-lg border border-cyan-500/30">
-                        <span className="text-gray-100 font-medium">Owner:</span>
-                        <span className="text-white font-mono text-sm">{finalWalletAddress}</span>
+                      <div className="p-3 bg-slate-800 rounded-lg border border-cyan-500/30">
+                        <span className="text-gray-100 font-medium block mb-2">Owner:</span>
+                        <span className="text-white font-mono text-xs sm:text-sm break-all block bg-slate-900 p-2 rounded border border-slate-700">{finalWalletAddress}</span>
                       </div>
-                      <div className="flex justify-between items-center p-3 bg-slate-800 rounded-lg border border-purple-500/30">
+                      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center p-3 bg-slate-800 rounded-lg border border-purple-500/30 gap-2">
                         <span className="text-gray-100 font-medium">Name:</span>
                         <span className="text-white font-bold">{formData.name}</span>
                       </div>
                       {deploymentTxHash && (
-                        <div className="flex justify-between items-center p-3 bg-slate-800 rounded-lg border border-emerald-500/30">
-                          <span className="text-gray-100 font-medium">Deployment TX:</span>
-                          <span className="text-white font-mono text-xs">{deploymentTxHash.slice(0, 10)}...</span>
+                        <div className="p-3 bg-slate-800 rounded-lg border border-emerald-500/30">
+                          <span className="text-gray-100 font-medium block mb-2">Deployment TX:</span>
+                          <span className="text-white font-mono text-xs break-all block bg-slate-900 p-2 rounded border border-slate-700">{deploymentTxHash}</span>
                         </div>
                       )}
                       {transferTxHash && (
-                        <div className="flex justify-between items-center p-3 bg-slate-800 rounded-lg border border-emerald-500/30">
-                          <span className="text-gray-100 font-medium">Transfer TX:</span>
-                          <span className="text-white font-mono text-xs">{transferTxHash.slice(0, 10)}...</span>
+                        <div className="p-3 bg-slate-800 rounded-lg border border-emerald-500/30">
+                          <span className="text-gray-100 font-medium block mb-2">Transfer TX:</span>
+                          <span className="text-white font-mono text-xs break-all block bg-slate-900 p-2 rounded border border-slate-700">{transferTxHash}</span>
                         </div>
                       )}
                     </div>
                   </div>
 
-                  <div className="flex gap-4">
+                  <div className="flex flex-col sm:flex-row gap-4">
                     <Button 
                       onClick={() => window.open(`https://sepolia.basescan.org/address/${collectionAddress}`, '_blank')}
                       variant="outline"
-                      className="flex-1 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-600 hover:to-cyan-600 text-white font-bold py-4 px-6 rounded-lg shadow-lg hover:shadow-xl transition-all duration-300"
+                      className="w-full sm:flex-1 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-600 hover:to-cyan-600 text-white font-bold py-4 px-6 rounded-lg shadow-lg hover:shadow-xl transition-all duration-300"
                     >
                       View on Basescan
                     </Button>
                     <Button 
                       onClick={() => window.location.href = '/profile'}
-                      className="flex-1 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-600 hover:to-cyan-600 text-white font-bold py-4 px-6 rounded-lg shadow-lg hover:shadow-xl transition-all duration-300"
+                      className="w-full sm:flex-1 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-600 hover:to-cyan-600 text-white font-bold py-4 px-6 rounded-lg shadow-lg hover:shadow-xl transition-all duration-300"
                     >
                       View in Profile
                     </Button>
