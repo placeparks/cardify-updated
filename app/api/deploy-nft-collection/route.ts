@@ -35,7 +35,8 @@ const FACTORY_ABI = [
           { name: "maxSupply",       type: "uint256" },
           { name: "mintPrice",       type: "uint256" },
           { name: "royaltyBps",      type: "uint96"  },
-          { name: "royaltyReceiver", type: "address" }
+          { name: "royaltyReceiver", type: "address" },
+          { name: "owner",           type: "address" }
         ]
       }
     ],
@@ -174,7 +175,8 @@ export async function POST(req: NextRequest) {
       createCollectionData = factoryInterface.encodeFunctionData("createCollection", [{
         name, symbol, baseURI: ipfsURL,
         maxSupply, mintPrice: mintWei,
-        royaltyBps, royaltyReceiver: royaltyRecipient
+        royaltyBps, royaltyReceiver: royaltyRecipient,
+        owner: ownerAddress
       }]);
     } catch (ethersError) {
       console.error("❌ Ethers operation failed:", ethersError);
@@ -209,27 +211,22 @@ export async function POST(req: NextRequest) {
     }
     const collectionAddress: string = (parsedLog!.args as any).collection;
 
-    // Transfer ownership to user using Gelato
-    const colAbi = [
-      "function owner() view returns (address)",
-      "function transferOwnership(address)"
-    ];
-    const collection = new ethers.Contract(collectionAddress, colAbi, provider);
-
-    const transferOwnershipData = collection.interface.encodeFunctionData("transferOwnership", [ownerAddress]);
-
-    let transferTxHash: string | null = null;
+    // Verify the collection owner matches the requested owner
+    let onChainOwner: string | undefined;
     try {
-      const transferTaskId = await submitGelatoTransaction(
-        collectionAddress,
-        transferOwnershipData
-      );
-      
-      transferTxHash = await waitForGelatoTask(transferTaskId);
-      await provider.waitForTransaction(transferTxHash);
-    } catch (e) {
-      // Non-fatal: deployment succeeded; transfer can be retried via admin later
-      console.error('Ownership transfer failed:', e);
+      const colAbi = ["function owner() view returns (address)"];
+      const collection = new ethers.Contract(collectionAddress, colAbi, provider);
+      onChainOwner = await collection.owner();
+    } catch (verifyError) {
+      console.warn("Unable to verify collection owner", verifyError);
+    }
+
+    if (onChainOwner && onChainOwner.toLowerCase() !== ownerAddress.toLowerCase()) {
+      console.error(`Collection ownership mismatch. Expected ${ownerAddress}, got ${onChainOwner}`);
+      return NextResponse.json({
+        success: false,
+        error: `Collection ownership mismatch. Expected ${ownerAddress}, got ${onChainOwner}`
+      }, { status: 502 });
     }
 
     // Persist to DB
@@ -263,7 +260,6 @@ export async function POST(req: NextRequest) {
       success: true,
       collectionAddress,
       transactionHash: txHash,
-      transferTransactionHash: transferTxHash,
       creditsDeducted: 20,
       message: "NFT collection deployed successfully using Gelato gas sponsorship!"
     });
