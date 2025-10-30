@@ -99,11 +99,7 @@ export default function LaunchSeriesPage() {
                       <span className="w-2 h-2 bg-cyber-pink rounded-full" />
                       <span>Smart contract deployment</span>
                     </div>
-                    <div className="flex items-center gap-2 text-sm text-gray-300">
-                      <span className="w-2 h-2 bg-cyber-pink rounded-full" />
-                      <span>Redemption system</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm text-gray-300">
+                                <div className="flex items-center gap-2 text-sm text-gray-300">
                       <span className="w-2 h-2 bg-cyber-pink rounded-full" />
                       <span>Automatic royalty setup</span>
                     </div>
