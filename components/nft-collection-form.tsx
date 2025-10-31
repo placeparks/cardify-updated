@@ -9,6 +9,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Loader2, AlertCircle, CheckCircle, ExternalLink } from 'lucide-react'
 import { collectionAPI } from '@/lib/collection-api'
+import { useAccount } from 'wagmi'
+import { useWallets } from '@privy-io/react-auth'
 
 interface NFTCollectionFormProps {
   onCollectionGenerated: (address: string, codes: string[]) => void
@@ -16,6 +18,7 @@ interface NFTCollectionFormProps {
   baseImage: string // The generated/uploaded card image
   collectionNumber: number
   cardId?: string | null // Optional: Card ID for linking NFT to physical card supply
+  ownerAddress?: string // Optional: wallet address to set as owner (will try to get from wallet hooks if not provided)
 }
 
 export function NFTCollectionForm({ 
@@ -23,8 +26,18 @@ export function NFTCollectionForm({
   onClose, 
   baseImage,
   collectionNumber,
-  cardId
+  cardId,
+  ownerAddress: propOwnerAddress
 }: NFTCollectionFormProps) {
+  const { address: walletAddress } = useAccount()
+  const { wallets } = useWallets()
+  
+  // Get owner address: prop > wallet > embedded wallet
+  const embeddedWalletAddress = wallets
+    ?.find((wallet) => wallet.walletClientType === 'privy' || wallet.walletClientType === 'privy-v2')
+    ?.address
+  const ownerAddress = propOwnerAddress || walletAddress || embeddedWalletAddress || wallets?.[0]?.address
+  
   const [formData, setFormData] = useState({
     name: '',
     symbol: '',
@@ -126,6 +139,16 @@ export function NFTCollectionForm({
         reader.readAsDataURL(file);
       });
 
+      // Validate owner address
+      if (!ownerAddress) {
+        setResult({
+          success: false,
+          error: 'Wallet address is required. Please connect your wallet.'
+        })
+        setLoading(false)
+        return
+      }
+
       // Then generate collection with Pinata URL
       const response = await collectionAPI.generateCollection({
         collectionNumber,
@@ -134,8 +157,8 @@ export function NFTCollectionForm({
         image: pinataUrl,
         description: formData.description,
         maxSupply: parseInt(formData.maxSupply),
-        royaltyRecipient: "0x21A5625Fc19469c11555B5607eDB2B97324e7D82", // Default royalty recipient
-        royaltyBps: parseInt(formData.royaltyBps)
+        royaltyBps: parseInt(formData.royaltyBps),
+        ownerAddress // Required: wallet address to set as owner (royalty recipient is automatically set to owner)
       })
 
       setResult(response)
@@ -289,6 +312,18 @@ export function NFTCollectionForm({
       </CardHeader>
 
       <CardContent>
+        {!ownerAddress && (
+          <div className="mb-4 p-3 bg-yellow-900/30 border border-yellow-500/50 rounded-lg">
+            <div className="flex items-center gap-2 text-yellow-400">
+              <AlertCircle className="w-4 h-4" />
+              <span className="text-sm font-medium">Wallet Required</span>
+            </div>
+            <p className="text-sm text-yellow-300 mt-1">
+              Please connect your wallet to generate an NFT collection.
+            </p>
+          </div>
+        )}
+        
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -378,8 +413,8 @@ export function NFTCollectionForm({
           <div className="flex gap-2 pt-4">
             <Button
               type="submit"
-              disabled={loading}
-              className="flex-1 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white font-bold py-3 px-6 rounded-lg shadow-lg hover:shadow-xl transition-all duration-300"
+              disabled={loading || !ownerAddress}
+              className="flex-1 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white font-bold py-3 px-6 rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
                 <>
