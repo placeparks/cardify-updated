@@ -17,7 +17,8 @@ import { GelatoRelay, type SponsoredCallRequest } from "@gelatonetwork/relay-sdk
        uint256 maxSupply,
        address royaltyRecip,
        uint96  royaltyBps,
-       address owner_
+       address owner_,
+       bytes32[] codeHashes
      ) returns (address)
    - event CollectionDeployed(address indexed creator, address collection, address owner)
    - setMarketplace(address)
@@ -50,6 +51,7 @@ const erc1155FactoryAbi = [
       { internalType: "address", name: "royaltyRecip", type: "address" },
       { internalType: "uint96", name: "royaltyBps", type: "uint96" },
       { internalType: "address", name: "owner_", type: "address" },
+      { internalType: "bytes32[]", name: "codeHashes", type: "bytes32[]" },
     ],
     name: "createCollection",
     outputs: [{ internalType: "address", name: "col", type: "address" }],
@@ -423,11 +425,11 @@ export async function POST(
       ownerAddress,
     });
 
-    // Generate codes (optional; used later if your collection supports it)
+    // Generate codes BEFORE deployment (needed for createCollection)
     console.log("🎲 [NFT Collection] Generating codes...");
     const codes = generateRandomCodes(maxSupplyNum!);
     const hashes = codes.map((c) => ethers.keccak256(ethers.toUtf8Bytes(c)));
-    console.log("🔐 [NFT Collection] Generated", codes.length, "codes");
+    console.log("🔐 [NFT Collection] Generated", codes.length, "codes with hashes");
 
     /* ── Execute tx with Gelato ─────────────────────────────────────────── */
     console.log("📄 [NFT Collection] Deploying contract with Gelato...");
@@ -443,7 +445,8 @@ export async function POST(
       maxSupply,     // uint256 maxSupply
       royaltyRecip,  // address royaltyRecip (set to owner)
       royaltyBps,    // uint96  royaltyBps
-      ownerAddress   // address owner_
+      ownerAddress,  // address owner_
+      hashes         // bytes32[] codeHashes
     ]);
 
     // Submit to Gelato
@@ -489,47 +492,23 @@ export async function POST(
 
     console.log("📍 [NFT Collection] Collection address:", collectionAddress);
 
-    /* ── Optionally push codes to collection (if method exists) ─────────── */
-    try {
-      console.log("⏳ [NFT Collection] Waiting before adding codes...");
-      await new Promise((r) => setTimeout(r, 1500));
-
-      // Minimal ABI for addValidCodes
-      const codeAbi = [
-        {
-          inputs: [{ internalType: "bytes32[]", name: "hashes", type: "bytes32[]" }],
-          name: "addValidCodes",
-          outputs: [],
-          stateMutability: "nonpayable",
-          type: "function",
-        },
-      ] as const;
-
-      const codeInterface = new ethers.Interface(codeAbi);
-      const addCodesData = codeInterface.encodeFunctionData("addValidCodes", [hashes]);
-
-      // Submit to Gelato
-      const addCodesTaskId = await submitGelatoTransaction(collectionAddress, addCodesData);
-      console.log("⏳ [NFT Collection] Adding codes via Gelato:", addCodesTaskId);
-      
-      // Wait for completion
-      const addCodesTxHash = await waitForGelatoTask(addCodesTaskId);
-      console.log("✅ [NFT Collection] Codes added successfully:", addCodesTxHash);
-    } catch (err) {
-      console.log(
-        "⚠️ [NFT Collection] Skipping addValidCodes (method missing or guarded):",
-        (err as Error)?.message
-      );
-    }
+    // ✅ Codes are now added during deployment via constructor/InitParams
+    // No need for separate addValidCodes call - codes are set atomically during collection creation
+    console.log("✅ [NFT Collection] Codes were added during collection deployment");
 
     /* ── DB writes ──────────────────────────────────────────────────────── */
     const pinataCid = extractCidFromPinataUrl(image);
-
+    // Convert image URI to ipfs:// format for consistency
+    const imageUriIpfs = toIpfsBaseUri(image); // This returns ipfs://cid/ format
+    
     console.log("💾 [NFT Collection] Storing collection in database...", {
       address: collectionAddress.toLowerCase(),
       name: name_,
       symbol: symbol_,
       maxSupply: maxSupplyNum,
+      cid: pinataCid,
+      baseUri: baseUri,
+      imageUri: imageUriIpfs,
       active: true,
     });
 
@@ -543,8 +522,8 @@ export async function POST(
       description: description,
       max_supply: maxSupplyNum!,
       mint_price: 0,
-      image_uri: image,
-      base_uri: baseUri, // normalized ipfs base
+      image_uri: imageUriIpfs, // Save as ipfs://cid/ format
+      base_uri: baseUri, // normalized ipfs://cid/ format (already correct)
       royalty_recipient: royaltyRecip, // Set to owner address
       royalty_bps: royaltyBps,
       active: true,
