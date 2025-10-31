@@ -289,11 +289,17 @@ export async function POST(
       errors.push("maxSupply (positive integer)");
     }
 
-    const ownerAddressRaw = typeof body.ownerAddress === "string" ? body.ownerAddress.trim() : "";
+    // Get ownerAddress: try ownerAddress first, then royaltyRecipient, then DEFAULT_ROYALTY_RECIPIENT
     let ownerAddress: string | null = null;
+    const ownerAddressRaw = typeof body.ownerAddress === "string" ? body.ownerAddress.trim() : "";
+    const royaltyRecipientRaw = typeof body.royaltyRecipient === "string" ? body.royaltyRecipient.trim() : "";
+    
+    // Try ownerAddress first, then fallback to royaltyRecipient, then env default
+    const addressToValidate = ownerAddressRaw || royaltyRecipientRaw || DEFAULT_ROYALTY_RECIPIENT || "";
+    
     try {
-      if (ownerAddressRaw) {
-        ownerAddress = ethers.getAddress(ownerAddressRaw);
+      if (addressToValidate) {
+        ownerAddress = ethers.getAddress(addressToValidate);
       } else {
         errors.push("ownerAddress");
       }
