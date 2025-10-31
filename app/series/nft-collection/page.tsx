@@ -86,8 +86,10 @@ export default function NFTCollectionPage() {
   })
   
   // Get the embedded wallet address (from Privy)
-  const embeddedWalletAddress = wallets?.[0]?.address
-  const finalWalletAddress = embeddedWalletAddress || walletAddress
+  const embeddedWalletAddress = wallets
+    ?.find((wallet) => wallet.walletClientType === 'privy' || wallet.walletClientType === 'privy-v2')
+    ?.address
+  const finalWalletAddress = embeddedWalletAddress || walletAddress || wallets?.[0]?.address || null
 
   // Check user authentication and credits
   useEffect(() => {
@@ -123,6 +125,20 @@ export default function NFTCollectionPage() {
       setStep('form')
     }
   }, [isConnected, walletAddress, authenticated, embeddedWalletAddress, finalWalletAddress])
+
+  useEffect(() => {
+    if (!ready) return
+    console.log('[NFT Deploy] Wallet state', {
+      connectedWalletAddress: walletAddress ?? null,
+      privyEmbeddedWallet: embeddedWalletAddress ?? null,
+      selectedOwnerAddress: finalWalletAddress ?? null,
+      availableWallets: wallets?.map((wallet) => ({
+        address: wallet.address,
+        walletClientType: wallet.walletClientType,
+        connectorType: wallet.connectorType ?? null,
+      })) ?? []
+    })
+  }, [ready, wallets, walletAddress, embeddedWalletAddress, finalWalletAddress])
 
   // Note: Removed automatic wallet creation trigger - user will click button manually
 
@@ -220,6 +236,13 @@ export default function NFTCollectionPage() {
     setStep('deploying')
     
     try {
+      console.log('[NFT Deploy] Starting deployment with state', {
+        finalWalletAddress,
+        pinataUrl,
+        userId: user.id,
+        formData,
+      })
+
       // Get Supabase session for authentication
       const { getSupabaseBrowserClient } = await import('@/lib/supabase-browser')
       const supabase = getSupabaseBrowserClient()
@@ -251,10 +274,12 @@ export default function NFTCollectionPage() {
       })
       
       if (!response.ok) {
+        console.error('[NFT Deploy] API returned non-OK status', response.status)
         throw new Error('Failed to deploy collection')
       }
       
       const result = await response.json()
+      console.log('[NFT Deploy] API response', result)
       setCollectionAddress(result.collectionAddress)
       setDeploymentTxHash(result.transactionHash)
       setTransferTxHash(result.transferTransactionHash)
