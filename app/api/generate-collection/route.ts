@@ -76,12 +76,12 @@ const erc1155FactoryAbi = [
    Types
    ------------------------------------------------------------------------- */
 interface GenerateCollectionRequest {
-  collectionNumber: number;
+  collectionNumber?: number; // Optional: not used in validation/processing
   name: string;
   symbol: string;
   image: string; // Gateway URL or ipfs://
   description?: string;
-  maxSupply: number;
+  maxSupply: number | string; // Accept number or string (will be normalized)
   royaltyRecipient?: string; // Deprecated - will be set to owner address
   royaltyBps?: number; // default 250 = 2.5%
   ownerAddress: string; // Required: wallet address to set as owner
@@ -262,46 +262,57 @@ export async function POST(
   try {
     const body = (await req.json()) as GenerateCollectionRequest;
 
-    console.log("📝 [NFT Collection] Request body:", {
-      collectionNumber: body.collectionNumber,
-      name: body.name,
-      symbol: body.symbol,
-      maxSupply: body.maxSupply,
-      imageLength: body.image?.length || 0,
-    });
+    console.log("📝 [NFT Collection] Raw request body:", body);
 
-    // Input validation
-    if (!body.collectionNumber || !body.name || !body.symbol || !body.image || !body.maxSupply || !body.ownerAddress) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            "Missing required fields: collectionNumber, name, symbol, image, maxSupply, ownerAddress",
-        },
-        { status: 400 }
-      );
+    // Strict validation (no truthy/falsy pitfalls)
+    const errors: string[] = [];
+
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) errors.push("name");
+
+    const symbol = typeof body.symbol === "string" ? body.symbol.trim() : "";
+    if (!symbol) errors.push("symbol");
+
+    const image = typeof body.image === "string" ? body.image.trim() : "";
+    if (!image) errors.push("image");
+
+    const description = typeof body.description === "string" ? body.description : "";
+
+    let maxSupplyNum: number | null = null;
+    if (typeof body.maxSupply === "number") {
+      maxSupplyNum = body.maxSupply;
+    } else if (typeof body.maxSupply === "string" && body.maxSupply.trim() !== "") {
+      const n = Number(body.maxSupply);
+      if (!Number.isNaN(n)) maxSupplyNum = n;
+    }
+    if (maxSupplyNum === null || !Number.isInteger(maxSupplyNum) || maxSupplyNum <= 0) {
+      errors.push("maxSupply (positive integer)");
     }
 
-    // Validate owner address
-    if (!ethers.isAddress(body.ownerAddress)) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid ownerAddress format",
-        },
-        { status: 400 }
-      );
+    const ownerAddressRaw = typeof body.ownerAddress === "string" ? body.ownerAddress.trim() : "";
+    let ownerAddress: string | null = null;
+    try {
+      if (ownerAddressRaw) {
+        ownerAddress = ethers.getAddress(ownerAddressRaw);
+      } else {
+        errors.push("ownerAddress");
+      }
+    } catch {
+      errors.push("ownerAddress (valid checksum or hex address)");
     }
-    if (body.maxSupply <= 0) {
+
+    const royaltyBps = (() => {
+      const v = body.royaltyBps ?? 250;
+      if (typeof v !== "number" || v < 0 || v > 10_000) {
+        if (typeof v === "number") errors.push("royaltyBps (0..10000)");
+        return 250;
+      }
+      return v;
+    })();
+
+    if (errors.length) {
       return NextResponse.json(
-        { success: false, error: "maxSupply must be > 0" },
-        { status: 400 }
-      );
-    }
-    const royaltyBps = body.royaltyBps ?? 250;
-    if (royaltyBps < 0 || royaltyBps > 10_000) {
-      return NextResponse.json(
-        { success: false, error: "royaltyBps must be between 0 and 10_000" },
+        { success: false, error: `Missing/invalid: ${errors.join(", ")}` },
         { status: 400 }
       );
     }
@@ -383,16 +394,15 @@ export async function POST(
     }
 
     /* ── Build call args with CORRECT ORDER ─────────────────────────────── */
+    // Use normalized/parsed values from here on:
     // Convert any gateway URL to base ipfs://CID/
-    const baseUri = toIpfsBaseUri(body.image); // ensure trailing "/"
-    const name_ = body.name;
-    const symbol_ = body.symbol;
-    const description = body.description ?? "";
+    const baseUri = toIpfsBaseUri(image); // ensure trailing "/"
+    const name_ = name;
+    const symbol_ = symbol;
     const mintPriceWei = BigInt(0); // free mints as per your spec
-    const maxSupply = BigInt(body.maxSupply);
-    const ownerAddress = ethers.getAddress(body.ownerAddress); // Normalize address
+    const maxSupply = BigInt(maxSupplyNum!);
     // Set royalty recipient to owner address automatically
-    const royaltyRecip = ownerAddress;
+    const royaltyRecip = ownerAddress!;
 
     console.log("🏭 [NFT Collection] Factory address:", FACTORY_ADDRESS);
     console.log("📋 [NFT Collection] Collection params:", {
@@ -409,7 +419,7 @@ export async function POST(
 
     // Generate codes (optional; used later if your collection supports it)
     console.log("🎲 [NFT Collection] Generating codes...");
-    const codes = generateRandomCodes(body.maxSupply);
+    const codes = generateRandomCodes(maxSupplyNum!);
     const hashes = codes.map((c) => ethers.keccak256(ethers.toUtf8Bytes(c)));
     console.log("🔐 [NFT Collection] Generated", codes.length, "codes");
 
@@ -507,13 +517,13 @@ export async function POST(
     }
 
     /* ── DB writes ──────────────────────────────────────────────────────── */
-    const pinataCid = extractCidFromPinataUrl(body.image);
+    const pinataCid = extractCidFromPinataUrl(image);
 
     console.log("💾 [NFT Collection] Storing collection in database...", {
       address: collectionAddress.toLowerCase(),
-      name: body.name,
-      symbol: body.symbol,
-      maxSupply: body.maxSupply,
+      name: name_,
+      symbol: symbol_,
+      maxSupply: maxSupplyNum,
       active: true,
     });
 
@@ -522,13 +532,13 @@ export async function POST(
       owner: user.id,
       cid: pinataCid,
       collection_type: "erc1155",
-      name: body.name,
-      symbol: body.symbol,
-      description: body.description ?? "",
-      max_supply: body.maxSupply,
+      name: name_,
+      symbol: symbol_,
+      description: description,
+      max_supply: maxSupplyNum!,
       mint_price: 0,
-      image_uri: body.image,
-      base_uri: toIpfsBaseUri(body.image), // normalized ipfs base
+      image_uri: image,
+      base_uri: baseUri, // normalized ipfs base
       royalty_recipient: royaltyRecip, // Set to owner address
       royalty_bps: royaltyBps,
       active: true,
@@ -593,9 +603,9 @@ export async function POST(
       newCreditBalance: updatedProfile?.credits ?? "unknown",
       collection: {
         address: collectionAddress,
-        name: body.name,
-        symbol: body.symbol,
-        maxSupply: body.maxSupply,
+        name: name_,
+        symbol: symbol_,
+        maxSupply: Number(maxSupplyNum!),
         active: true,
         type: "erc1155",
       },
