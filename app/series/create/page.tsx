@@ -240,7 +240,7 @@ export default function CreateSeriesPage() {
                         type="button"
                         onClick={addTag}
                         variant="outline"
-                        className="border-cyber-cyan/50 text-cyber-cyan hover:bg-cyber-cyan/10"
+                        className="cyber-button"
                       >
                         Add
                       </Button>
@@ -356,7 +356,7 @@ export default function CreateSeriesPage() {
                 <Button
                   onClick={() => setStep('details')}
                   variant="outline"
-                  className="mt-4 border-cyber-cyan/50 text-cyber-cyan hover:bg-cyber-cyan/10"
+                  className="mt-4 cyber-button"
                 >
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Edit Details
