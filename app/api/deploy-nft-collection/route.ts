@@ -47,8 +47,9 @@ const FACTORY_ABI = [
     type: "event",
     anonymous: false,
     inputs: [
-      { indexed: true,  name: "creator",    type: "address" },
-      { indexed: false, name: "collection", type: "address" }
+      { indexed: true, name: "creator",    type: "address" },
+      { indexed: true, name: "collection", type: "address" },
+      { indexed: true, name: "owner",     type: "address" }
     ]
   }
 ] as const;
@@ -183,6 +184,10 @@ export async function POST(req: NextRequest) {
       throw ethersError;
     }
 
+    // 🔍 DEBUG: Log the owner being passed (temporary debugging)
+    console.log("🔍 [DEBUG] Owner address being passed:", ownerAddress);
+    console.log("🔍 [DEBUG] Factory address:", FACTORY_ADDRESS);
+    
     const createTaskId = await submitGelatoTransaction(FACTORY_ADDRESS, createCollectionData);
 
     // Wait for the transaction hash
@@ -198,7 +203,7 @@ export async function POST(req: NextRequest) {
       }, { status: 502 });
     }
 
-    // Parse event (creator, collection)
+    // Parse event (creator, collection, owner)
     const factory = new ethers.Contract(FACTORY_ADDRESS, FACTORY_ABI, provider);
     const iface = factory.interface;
     const parsedLog = receipt.logs.map(l => safeParse(iface, l))
@@ -209,24 +214,67 @@ export async function POST(req: NextRequest) {
         error: "CollectionDeployed event not found"
       }, { status: 502 });
     }
-    const collectionAddress: string = (parsedLog!.args as any).collection;
+    
+    const eventArgs = parsedLog!.args as any;
+    const collectionAddress: string = eventArgs.collection;
+    const eventOwner: string = eventArgs.owner; // Owner from the event
+    
+    // 🔍 DEBUG: Log the owner from event
+    console.log("🔍 [DEBUG] Owner from event:", eventOwner);
+    console.log("🔍 [DEBUG] Expected owner:", ownerAddress);
+    console.log("🔍 [DEBUG] Collection address:", collectionAddress);
+    console.log("🔍 [DEBUG] Creator from event:", eventArgs.creator);
 
-    // Verify the collection owner matches the requested owner
+    // Verify the owner from the event matches the requested owner
+    if (eventOwner && eventOwner.toLowerCase() !== ownerAddress.toLowerCase()) {
+      console.error(`❌ Event owner mismatch. Expected ${ownerAddress}, got ${eventOwner}`);
+      
+      return NextResponse.json({
+        success: false,
+        error: `Collection ownership mismatch. Expected ${ownerAddress}, got ${eventOwner}. Please verify the owner parameter is being passed correctly in the createCollection call.`
+      }, { status: 502 });
+    }
+
+    // Double-check by reading the actual owner from the collection contract
     let onChainOwner: string | undefined;
     try {
       const colAbi = ["function owner() view returns (address)"];
       const collection = new ethers.Contract(collectionAddress, colAbi, provider);
       onChainOwner = await collection.owner();
+      
+      // 🔍 DEBUG: Log the actual owner vs expected
+      console.log("🔍 [DEBUG] Owner from collection contract:", onChainOwner);
+      
+      // Verify both match
+      if (!onChainOwner) {
+        console.error(`❌ Could not read owner from collection contract`);
+        return NextResponse.json({
+          success: false,
+          error: `Could not read owner from collection contract`
+        }, { status: 502 });
+      }
+      
+      if (onChainOwner.toLowerCase() !== ownerAddress.toLowerCase()) {
+        console.error(`❌ Collection contract owner mismatch. Expected ${ownerAddress}, got ${onChainOwner}`);
+        return NextResponse.json({
+          success: false,
+          error: `Collection ownership mismatch. Expected ${ownerAddress}, got ${onChainOwner}. The collection contract owner does not match the expected owner.`
+        }, { status: 502 });
+      }
+      
+      // Also verify event owner matches contract owner
+      if (eventOwner && eventOwner.toLowerCase() !== onChainOwner.toLowerCase()) {
+        console.error(`❌ Event owner (${eventOwner}) does not match contract owner (${onChainOwner})`);
+      }
     } catch (verifyError) {
-      console.warn("Unable to verify collection owner", verifyError);
-    }
-
-    if (onChainOwner && onChainOwner.toLowerCase() !== ownerAddress.toLowerCase()) {
-      console.error(`Collection ownership mismatch. Expected ${ownerAddress}, got ${onChainOwner}`);
-      return NextResponse.json({
-        success: false,
-        error: `Collection ownership mismatch. Expected ${ownerAddress}, got ${onChainOwner}`
-      }, { status: 502 });
+      console.warn("⚠️ Unable to verify collection owner from contract", verifyError);
+      // If we can't read from contract, trust the event owner if it matches
+      if (!eventOwner || eventOwner.toLowerCase() !== ownerAddress.toLowerCase()) {
+        return NextResponse.json({
+          success: false,
+          error: `Could not verify collection owner. Event owner: ${eventOwner || 'unknown'}, Expected: ${ownerAddress}`
+        }, { status: 502 });
+      }
     }
 
     // Persist to DB
