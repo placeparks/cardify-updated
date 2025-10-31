@@ -16,9 +16,10 @@ import { GelatoRelay, type SponsoredCallRequest } from "@gelatonetwork/relay-sdk
        uint256 mintPrice,
        uint256 maxSupply,
        address royaltyRecip,
-       uint96  royaltyBps
+       uint96  royaltyBps,
+       address owner_
      ) returns (address)
-   - event CollectionDeployed(address indexed creator, address collection)
+   - event CollectionDeployed(address indexed creator, address collection, address owner)
    - setMarketplace(address)
    - isCardifyCollection(address) view returns (bool)
    ------------------------------------------------------------------------- */
@@ -32,7 +33,8 @@ const erc1155FactoryAbi = [
     anonymous: false,
     inputs: [
       { indexed: true, internalType: "address", name: "creator", type: "address" },
-      { indexed: false, internalType: "address", name: "collection", type: "address" },
+      { indexed: true, internalType: "address", name: "collection", type: "address" },
+      { indexed: true, internalType: "address", name: "owner", type: "address" },
     ],
     name: "CollectionDeployed",
     type: "event",
@@ -47,6 +49,7 @@ const erc1155FactoryAbi = [
       { internalType: "uint256", name: "maxSupply", type: "uint256" },
       { internalType: "address", name: "royaltyRecip", type: "address" },
       { internalType: "uint96", name: "royaltyBps", type: "uint96" },
+      { internalType: "address", name: "owner_", type: "address" },
     ],
     name: "createCollection",
     outputs: [{ internalType: "address", name: "col", type: "address" }],
@@ -79,8 +82,9 @@ interface GenerateCollectionRequest {
   image: string; // Gateway URL or ipfs://
   description?: string;
   maxSupply: number;
-  royaltyRecipient?: string;
+  royaltyRecipient?: string; // Deprecated - will be set to owner address
   royaltyBps?: number; // default 250 = 2.5%
+  ownerAddress: string; // Required: wallet address to set as owner
 }
 
 interface GenerateCollectionResponse {
@@ -267,12 +271,23 @@ export async function POST(
     });
 
     // Input validation
-    if (!body.collectionNumber || !body.name || !body.symbol || !body.image || !body.maxSupply) {
+    if (!body.collectionNumber || !body.name || !body.symbol || !body.image || !body.maxSupply || !body.ownerAddress) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "Missing required fields: collectionNumber, name, symbol, image, maxSupply",
+            "Missing required fields: collectionNumber, name, symbol, image, maxSupply, ownerAddress",
+        },
+        { status: 400 }
+      );
+    }
+
+    // Validate owner address
+    if (!ethers.isAddress(body.ownerAddress)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid ownerAddress format",
         },
         { status: 400 }
       );
@@ -375,19 +390,9 @@ export async function POST(
     const description = body.description ?? "";
     const mintPriceWei = BigInt(0); // free mints as per your spec
     const maxSupply = BigInt(body.maxSupply);
-    const royaltyRecip =
-      body.royaltyRecipient && ethers.isAddress(body.royaltyRecipient)
-        ? body.royaltyRecipient
-        : (DEFAULT_ROYALTY_RECIPIENT && ethers.isAddress(DEFAULT_ROYALTY_RECIPIENT))
-        ? DEFAULT_ROYALTY_RECIPIENT
-        : ethers.ZeroAddress; // Use environment variable or zero address as fallback
-
-    if (royaltyBps > 0 && (!royaltyRecip || royaltyRecip === ethers.ZeroAddress)) {
-      return NextResponse.json(
-        { success: false, error: "royaltyRecipient required when royaltyBps > 0" },
-        { status: 400 }
-      );
-    }
+    const ownerAddress = ethers.getAddress(body.ownerAddress); // Normalize address
+    // Set royalty recipient to owner address automatically
+    const royaltyRecip = ownerAddress;
 
     console.log("🏭 [NFT Collection] Factory address:", FACTORY_ADDRESS);
     console.log("📋 [NFT Collection] Collection params:", {
@@ -399,6 +404,7 @@ export async function POST(
       maxSupply: maxSupply.toString(),
       royaltyRecip,
       royaltyBps,
+      ownerAddress,
     });
 
     // Generate codes (optional; used later if your collection supports it)
@@ -419,8 +425,9 @@ export async function POST(
       description,   // string description
       mintPriceWei,  // uint256 mintPrice
       maxSupply,     // uint256 maxSupply
-      royaltyRecip,  // address royaltyRecip
-      royaltyBps     // uint96  royaltyBps
+      royaltyRecip,  // address royaltyRecip (set to owner)
+      royaltyBps,    // uint96  royaltyBps
+      ownerAddress   // address owner_
     ]);
 
     // Submit to Gelato
@@ -522,7 +529,7 @@ export async function POST(
       mint_price: 0,
       image_uri: body.image,
       base_uri: toIpfsBaseUri(body.image), // normalized ipfs base
-      royalty_recipient: royaltyRecip,
+      royalty_recipient: royaltyRecip, // Set to owner address
       royalty_bps: royaltyBps,
       active: true,
       created_at: new Date().toISOString(),
