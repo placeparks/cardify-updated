@@ -163,11 +163,12 @@ export default function NFTsOnlyPage() {
                   
                   <Button 
                     asChild
-                    className="w-full cyber-button"
+                    className="w-full cyber-button h-11 sm:h-12 text-xs sm:text-sm font-medium"
                   >
-                    <Link href="/series/nft-collection">
-                      Start Creating NFT Collection
-                      <ArrowRight className="w-4 h-4 ml-2" />
+                    <Link href="/series/nft-collection" className="flex items-center justify-center">
+                      <span className="hidden sm:inline">Start Creating NFT Collection</span>
+                      <span className="sm:hidden">Create Collection</span>
+                      <ArrowRight className="w-4 h-4 ml-2 flex-shrink-0" />
                     </Link>
                   </Button>
                 </div>
