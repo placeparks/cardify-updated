@@ -7,8 +7,9 @@ interface GenerateCollectionRequest {
   image: string // Base64 encoded image
   description?: string
   maxSupply: number
-  royaltyRecipient?: string
+  royaltyRecipient?: string // Deprecated - will be set to owner address
   royaltyBps?: number
+  ownerAddress: string // Required: wallet address to set as owner
 }
 
 interface GenerateCollectionResponse {
